@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="14" fill="#18181b"/>
+  <!-- Antenna -->
+  <line x1="32" y1="52" x2="32" y2="24" stroke="#06b6d4" stroke-width="3" stroke-linecap="round"/>
+  <!-- Signal waves -->
+  <path d="M22 28a14 14 0 0 1 20 0" stroke="#06b6d4" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.9"/>
+  <path d="M17 22a22 22 0 0 1 30 0" stroke="#8b5cf6" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.7"/>
+  <path d="M12 16a30 30 0 0 1 40 0" stroke="#8b5cf6" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.4"/>
+  <!-- Antenna tip -->
+  <circle cx="32" cy="22" r="3" fill="#06b6d4"/>
+</svg>

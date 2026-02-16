@@ -695,7 +695,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Filters -->
-        <div class="card">
+        <div class="card relative z-10">
           <div class="flex flex-wrap gap-3">
             <input v-model="searchQuery" class="input max-w-xs" placeholder="Rechercher (nom, EUI, profil, tags)..." />
             <AppSelect
