@@ -3,8 +3,9 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useConnectionStore } from '@/stores/connection'
 import { useAuthStore } from '@/stores/auth'
 import { useDevices } from '@/composables/useDevices'
+import { useDeviceMetricsBatch } from '@/composables/useDeviceMetricsBatch'
 import { api } from '@/composables/useApi'
-import type { ChirpStackServer, Device, DeviceEvent, AnalyzeStats, DeviceStatus, MetricData } from '@/types'
+import type { ChirpStackServer, Device, DeviceEvent, DeviceMetricsEntry, AnalyzeStats, DeviceStatus, MetricData } from '@/types'
 import CopyButton from '@/components/common/CopyButton.vue'
 import Modal from '@/components/common/Modal.vue'
 import AppSelect from '@/components/common/AppSelect.vue'
@@ -15,6 +16,13 @@ const {
   loadAllDevices, getDeviceStatus, getStatusLabel, formatTimeAgo,
   getRecentEvents, getDeviceAppMetrics, getDeviceMetrics, base64ToHex,
 } = useDevices()
+const {
+  getEntry: getMetricsEntry,
+  fetchAllMetrics,
+  cancelAll: cancelMetrics,
+  reset: resetMetrics,
+  progress: metricsProgress,
+} = useDeviceMetricsBatch()
 
 // Auto-connect state
 const autoConnecting = ref(false)
@@ -143,6 +151,7 @@ async function selectTenant(tenantId: string) {
   conn.selectedApplicationName = ''
   devices.value = []
   stats.value = null
+  resetMetrics()
   await conn.loadApplications(tenantId)
   await conn.loadDeviceProfiles(tenantId)
 }
@@ -150,6 +159,7 @@ async function selectTenant(tenantId: string) {
 async function switchClientConnection(index: number) {
   devices.value = []
   stats.value = null
+  resetMetrics()
   await conn.switchConnection(index)
   if (conn.selectedApplicationId) {
     await loadDashboardDevices()
@@ -162,6 +172,7 @@ async function selectApp(appId: string) {
     conn.selectedApplicationName = ''
     devices.value = []
     stats.value = null
+    resetMetrics()
     return
   }
   conn.selectApplication(appId)
@@ -178,6 +189,8 @@ async function loadDashboardDevices() {
       conn.selectedApplicationId
     )
     computeStats()
+    // Fetch metrics progressively for all devices
+    fetchAllMetrics(devices.value, conn.currentServer.url, conn.currentServer.api_token)
   } finally {
     loadingDevices.value = false
   }
@@ -405,6 +418,70 @@ function tagClass(key: string): string {
   return 'tag-default'
 }
 
+interface MeasureBadge {
+  label: string
+  value: string
+  colorClass: string
+}
+
+function formatMeasuresCompact(entry: DeviceMetricsEntry): MeasureBadge[] {
+  const badges: MeasureBadge[] = []
+
+  // States first (last known values)
+  for (const [key, state] of Object.entries(entry.states)) {
+    const k = key.toLowerCase()
+    badges.push({
+      label: state.name || key,
+      value: state.value,
+      colorClass: getMeasureColor(k, state.value),
+    })
+  }
+
+  // Metrics (last non-zero value)
+  for (const [key, m] of Object.entries(entry.metrics)) {
+    const k = key.toLowerCase()
+    let lastVal = '-'
+    for (let i = m.values.length - 1; i >= 0; i--) {
+      if (m.values[i] !== 0) {
+        lastVal = m.values[i].toFixed(1)
+        break
+      }
+    }
+    if (lastVal === '-') continue
+    badges.push({
+      label: m.label || key,
+      value: lastVal + getMeasureUnit(k),
+      colorClass: getMeasureColor(k),
+    })
+  }
+
+  return badges.slice(0, 4)
+}
+
+function getMeasureColor(key: string, value?: string): string {
+  if (key.startsWith('temp') || key.includes('temperature')) return 'text-orange-400'
+  if (key.startsWith('humid') || key.includes('humidity') || key.includes('rh')) return 'text-blue-400'
+  if (key.startsWith('batt') || key === 'voltage') return 'text-yellow-400'
+  if (key === 'contact' || key === 'door' || key === 'window') {
+    const v = (value ?? '').toLowerCase()
+    if (v === 'open' || v === 'ouvert' || v === '1' || v === 'true') return 'text-red-400'
+    return 'text-emerald-400'
+  }
+  if (key === 'co2' || key.includes('co2')) return 'text-violet-400'
+  if (key === 'lux' || key.includes('light') || key.includes('luminosity')) return 'text-amber-400'
+  return 'text-zinc-300'
+}
+
+function getMeasureUnit(key: string): string {
+  if (key.startsWith('temp') || key.includes('temperature')) return '°C'
+  if (key.startsWith('humid') || key.includes('humidity') || key.includes('rh')) return '%'
+  if (key.startsWith('batt')) return '%'
+  if (key === 'voltage') return 'V'
+  if (key === 'co2' || key.includes('co2')) return ' ppm'
+  if (key === 'lux' || key.includes('light') || key.includes('luminosity')) return ' lx'
+  return ''
+}
+
 const statusColors: Record<DeviceStatus, string> = {
   active: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20',
   recent: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/20',
@@ -444,6 +521,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (stopStream) stopStream()
+  cancelMetrics()
 })
 </script>
 
@@ -635,6 +713,18 @@ onUnmounted(() => {
             <input v-model="tagFilter" class="input max-w-xs" placeholder="Tag (ex: Site=Paris)" />
           </div>
           <p class="text-xs text-zinc-500 mt-2">{{ filteredDevices.length }} / {{ devices.length }} devices</p>
+          <!-- Metrics loading progress -->
+          <div v-if="metricsProgress.total > 0 && metricsProgress.done < metricsProgress.total" class="mt-2">
+            <div class="flex items-center gap-2">
+              <div class="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
+                <div
+                  class="h-full bg-gradient-to-r from-cyan-500 to-violet-500 rounded-full transition-all duration-300"
+                  :style="{ width: `${(metricsProgress.done / metricsProgress.total) * 100}%` }"
+                />
+              </div>
+              <span class="text-[10px] text-zinc-500 whitespace-nowrap">Mesures {{ metricsProgress.done }}/{{ metricsProgress.total }}</span>
+            </div>
+          </div>
         </div>
 
         <!-- Device Table -->
@@ -651,6 +741,7 @@ onUnmounted(() => {
                   </th>
                   <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">Profil</th>
                   <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">Tags</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">Mesures</th>
                   <th class="px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-zinc-500 cursor-pointer select-none" @click="toggleSort('lastSeenAt')">
                     Dernier vu{{ sortIndicator('lastSeenAt') }}
                   </th>
@@ -679,6 +770,24 @@ onUnmounted(() => {
                         :title="Object.entries(d.tags).slice(3).map(([k,v]) => `${k}=${v}`).join(', ')"
                       >+{{ Object.keys(d.tags).length - 3 }}</span>
                     </div>
+                  </td>
+                  <td class="px-3 py-2.5 text-xs">
+                    <template v-if="getMetricsEntry(d.devEui)?.status === 'loading'">
+                      <div class="w-3 h-3 border border-cyan-400 border-t-transparent rounded-full animate-spin inline-block" />
+                    </template>
+                    <template v-else-if="getMetricsEntry(d.devEui)?.status === 'loaded'">
+                      <div v-if="formatMeasuresCompact(getMetricsEntry(d.devEui)!).length > 0" class="flex flex-wrap gap-x-2 gap-y-0.5">
+                        <span
+                          v-for="badge in formatMeasuresCompact(getMetricsEntry(d.devEui)!)"
+                          :key="badge.label"
+                          class="whitespace-nowrap"
+                          :class="badge.colorClass"
+                        >{{ badge.label }} <span class="font-semibold">{{ badge.value }}</span></span>
+                      </div>
+                      <span v-else class="text-zinc-600">-</span>
+                    </template>
+                    <span v-else-if="getMetricsEntry(d.devEui)?.status === 'error'" class="text-zinc-600">-</span>
+                    <span v-else class="text-zinc-700">...</span>
                   </td>
                   <td class="px-3 py-2.5 text-zinc-500 text-xs text-right">{{ formatTimeAgo(d.lastSeenAt) }}</td>
                   <td class="px-3 py-2.5 text-center">

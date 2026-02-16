@@ -218,3 +218,9 @@ export interface MetricData {
   total: number
   avg: number
 }
+
+export interface DeviceMetricsEntry {
+  status: 'loading' | 'loaded' | 'error'
+  states: Record<string, { name: string; value: string }>
+  metrics: Record<string, MetricData>
+}
