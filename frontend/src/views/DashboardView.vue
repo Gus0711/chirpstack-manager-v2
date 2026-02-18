@@ -9,6 +9,9 @@ import type { ChirpStackServer, Device, DeviceEvent, DeviceMetricsEntry, Analyze
 import CopyButton from '@/components/common/CopyButton.vue'
 import Modal from '@/components/common/Modal.vue'
 import AppSelect from '@/components/common/AppSelect.vue'
+import DeviceMetricsChart from '@/components/common/DeviceMetricsChart.vue'
+import { groupMetrics } from '@/utils/metricGrouping'
+import type { MetricGroup } from '@/utils/metricGrouping'
 
 const conn = useConnectionStore()
 const auth = useAuthStore()
@@ -72,6 +75,15 @@ const recentEventsLoading = ref(false)
 // Link metrics (RSSI, SNR, packets)
 const linkMetrics = ref<MetricData[]>([])
 const linkMetricsLoading = ref(false)
+
+// Charts modal
+const showCharts = ref(false)
+const chartsDevice = ref<{ devEui: string; name: string } | null>(null)
+const chartMetrics = ref<Record<string, MetricData>>({})
+const chartStates = ref<Record<string, { name: string; value: string }>>({})
+const chartLinkMetrics = ref<MetricData[]>([])
+const chartPeriod = ref<'24h' | '7d' | '30d'>('24h')
+const chartLoading = ref(false)
 
 async function loadSavedServers() {
   try {
@@ -353,6 +365,62 @@ async function loadLinkMetrics(devEui: string) {
     linkMetricsLoading.value = false
   }
 }
+
+// ── Charts modal logic ──
+async function openCharts(device: Device) {
+  chartsDevice.value = { devEui: device.devEui, name: device.name }
+  chartMetrics.value = {}
+  chartStates.value = {}
+  chartLinkMetrics.value = []
+  chartPeriod.value = '24h'
+  showCharts.value = true
+  await loadChartData(device.devEui, '24h')
+}
+
+async function loadChartData(devEui: string, period: '24h' | '7d' | '30d') {
+  if (!conn.currentServer) return
+  chartLoading.value = true
+  try {
+    const [appResult, linkResult] = await Promise.all([
+      getDeviceAppMetrics(
+        conn.currentServer.url, conn.currentServer.api_token, devEui, period
+      ),
+      getDeviceMetrics(
+        conn.currentServer.url, conn.currentServer.api_token, devEui, period
+      ),
+    ])
+    chartMetrics.value = appResult.metrics
+    chartStates.value = appResult.states
+    chartLinkMetrics.value = linkResult
+  } catch {
+    // Metrics might not be available
+  } finally {
+    chartLoading.value = false
+  }
+}
+
+async function changeChartPeriod(period: '24h' | '7d' | '30d') {
+  chartPeriod.value = period
+  if (chartsDevice.value) {
+    await loadChartData(chartsDevice.value.devEui, period)
+  }
+}
+
+function closeCharts() {
+  showCharts.value = false
+}
+
+const chartGroups = computed<MetricGroup[]>(() => groupMetrics(chartMetrics.value))
+
+const linkMetricGroups = computed<MetricGroup[]>(() =>
+  chartLinkMetrics.value.map(m => ({
+    label: m.label,
+    unit: m.label.toLowerCase().includes('rssi') ? 'dBm'
+        : m.label.toLowerCase().includes('snr') ? 'dB'
+        : '',
+    series: [{ key: m.label, data: m }],
+  }))
+)
 
 function closeEvents() {
   if (stopStream) {
@@ -795,7 +863,8 @@ onUnmounted(() => {
                       {{ getStatusLabel(getDeviceStatus(d)) }}
                     </span>
                   </td>
-                  <td class="px-3 py-2.5 text-right">
+                  <td class="px-3 py-2.5 text-right space-x-1">
+                    <button class="btn-sm btn-secondary text-xs" @click="openCharts(d)">Graphique</button>
                     <button class="btn-sm btn-secondary text-xs" @click="openEvents(d)">Messages</button>
                   </td>
                 </tr>
@@ -975,6 +1044,78 @@ onUnmounted(() => {
           <p class="text-zinc-500 text-sm">Aucun evenement recent pour ce device</p>
           <p class="text-zinc-500 text-xs mt-1">Ce device n'a pas encore envoye de messages, ou les evenements ont expire</p>
         </div>
+      </div>
+    </Modal>
+
+    <!-- Charts Modal -->
+    <Modal
+      :title="`Graphiques - ${chartsDevice?.name || ''}`"
+      :show="showCharts"
+      size="xl"
+      @close="closeCharts"
+    >
+      <div class="space-y-4">
+        <!-- Device info + period selector -->
+        <div class="flex items-center justify-between gap-3">
+          <span v-if="chartsDevice" class="text-sm font-mono text-zinc-400">{{ chartsDevice.devEui }}</span>
+          <div class="flex gap-1">
+            <button
+              v-for="p in (['24h', '7j', '30j'] as const)" :key="p"
+              class="px-3 py-1 text-xs rounded-full border transition-colors"
+              :class="chartPeriod === (p === '7j' ? '7d' : p === '30j' ? '30d' : '24h')
+                ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'
+                : 'text-zinc-400 border-white/[0.06] hover:border-white/[0.12]'"
+              @click="changeChartPeriod(p === '7j' ? '7d' : p === '30j' ? '30d' : '24h')"
+            >{{ p }}</button>
+          </div>
+        </div>
+
+        <!-- Loading -->
+        <div v-if="chartLoading" class="flex items-center gap-2 py-6 justify-center">
+          <div class="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+          <span class="text-sm text-zinc-500">Chargement des metriques...</span>
+        </div>
+
+        <template v-else>
+          <!-- States badges -->
+          <div v-if="Object.keys(chartStates).length > 0" class="flex flex-wrap gap-2">
+            <div
+              v-for="(state, key) in chartStates" :key="String(key)"
+              class="bg-white/[0.03] rounded-lg px-3 py-1.5 text-center"
+            >
+              <span class="text-sm font-semibold text-cyan-400">{{ state.value }}</span>
+              <span class="text-[10px] text-zinc-500 ml-1.5">{{ state.name || key }}</span>
+            </div>
+          </div>
+
+          <!-- Decoded metrics charts -->
+          <div v-if="chartGroups.length > 0">
+            <h4 class="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Mesures decodees</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <DeviceMetricsChart
+                v-for="g in chartGroups" :key="g.label"
+                :group="g"
+              />
+            </div>
+          </div>
+
+          <!-- Link metrics charts (RSSI, SNR) -->
+          <div v-if="linkMetricGroups.length > 0">
+            <h4 class="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Metriques radio</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <DeviceMetricsChart
+                v-for="g in linkMetricGroups" :key="g.label"
+                :group="g"
+              />
+            </div>
+          </div>
+
+          <!-- Empty state -->
+          <div v-if="chartGroups.length === 0 && linkMetricGroups.length === 0 && Object.keys(chartStates).length === 0" class="text-center py-8">
+            <p class="text-zinc-500 text-sm">Aucune mesure disponible</p>
+            <p class="text-zinc-600 text-xs mt-1">Ce device n'a pas encore transmis de donnees sur cette periode</p>
+          </div>
+        </template>
       </div>
     </Modal>
   </div>
