@@ -408,6 +408,17 @@ async function changeChartPeriod(period: '24h' | '7d' | '30d') {
 
 function closeCharts() {
   showCharts.value = false
+  expandedChart.value = null
+}
+
+const expandedChart = ref<MetricGroup | null>(null)
+
+function expandChart(group: MetricGroup) {
+  expandedChart.value = group
+}
+
+function collapseChart() {
+  expandedChart.value = null
 }
 
 const chartGroups = computed<MetricGroup[]>(() => groupMetrics(chartMetrics.value))
@@ -1077,44 +1088,63 @@ onUnmounted(() => {
         </div>
 
         <template v-else>
-          <!-- States badges -->
-          <div v-if="Object.keys(chartStates).length > 0" class="flex flex-wrap gap-2">
-            <div
-              v-for="(state, key) in chartStates" :key="String(key)"
-              class="bg-white/[0.03] rounded-lg px-3 py-1.5 text-center"
+          <!-- Expanded single chart view -->
+          <template v-if="expandedChart">
+            <button
+              class="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+              @click="collapseChart"
             >
-              <span class="text-sm font-semibold text-cyan-400">{{ state.value }}</span>
-              <span class="text-[10px] text-zinc-500 ml-1.5">{{ state.name || key }}</span>
-            </div>
-          </div>
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+              </svg>
+              Retour
+            </button>
+            <DeviceMetricsChart :group="expandedChart" :expanded="true" />
+          </template>
 
-          <!-- Decoded metrics charts -->
-          <div v-if="chartGroups.length > 0">
-            <h4 class="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Mesures decodees</h4>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <DeviceMetricsChart
-                v-for="g in chartGroups" :key="g.label"
-                :group="g"
-              />
+          <!-- Normal grid view -->
+          <template v-else>
+            <!-- States badges -->
+            <div v-if="Object.keys(chartStates).length > 0" class="flex flex-wrap gap-2">
+              <div
+                v-for="(state, key) in chartStates" :key="String(key)"
+                class="bg-white/[0.03] rounded-lg px-3 py-1.5 text-center"
+              >
+                <span class="text-sm font-semibold text-cyan-400">{{ state.value }}</span>
+                <span class="text-[10px] text-zinc-500 ml-1.5">{{ state.name || key }}</span>
+              </div>
             </div>
-          </div>
 
-          <!-- Link metrics charts (RSSI, SNR) -->
-          <div v-if="linkMetricGroups.length > 0">
-            <h4 class="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Metriques radio</h4>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <DeviceMetricsChart
-                v-for="g in linkMetricGroups" :key="g.label"
-                :group="g"
-              />
+            <!-- Decoded metrics charts -->
+            <div v-if="chartGroups.length > 0">
+              <h4 class="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Mesures decodees</h4>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <DeviceMetricsChart
+                  v-for="g in chartGroups" :key="g.label"
+                  :group="g"
+                  @expand="expandChart(g)"
+                />
+              </div>
             </div>
-          </div>
 
-          <!-- Empty state -->
-          <div v-if="chartGroups.length === 0 && linkMetricGroups.length === 0 && Object.keys(chartStates).length === 0" class="text-center py-8">
-            <p class="text-zinc-500 text-sm">Aucune mesure disponible</p>
-            <p class="text-zinc-600 text-xs mt-1">Ce device n'a pas encore transmis de donnees sur cette periode</p>
-          </div>
+            <!-- Link metrics charts (RSSI, SNR) -->
+            <div v-if="linkMetricGroups.length > 0">
+              <h4 class="text-xs font-medium uppercase tracking-wider text-zinc-500 mb-3">Metriques radio</h4>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <DeviceMetricsChart
+                  v-for="g in linkMetricGroups" :key="g.label"
+                  :group="g"
+                  @expand="expandChart(g)"
+                />
+              </div>
+            </div>
+
+            <!-- Empty state -->
+            <div v-if="chartGroups.length === 0 && linkMetricGroups.length === 0 && Object.keys(chartStates).length === 0" class="text-center py-8">
+              <p class="text-zinc-500 text-sm">Aucune mesure disponible</p>
+              <p class="text-zinc-600 text-xs mt-1">Ce device n'a pas encore transmis de donnees sur cette periode</p>
+            </div>
+          </template>
         </template>
       </div>
     </Modal>

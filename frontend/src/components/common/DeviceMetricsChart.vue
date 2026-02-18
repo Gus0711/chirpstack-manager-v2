@@ -19,7 +19,10 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, T
 
 const props = defineProps<{
   group: MetricGroup
+  expanded?: boolean
 }>()
+
+const emit = defineEmits<{ expand: [] }>()
 
 const chartData = computed(() => {
   // Use timestamps from the first series
@@ -125,11 +128,23 @@ const miniStats = computed(() => {
 
 <template>
   <div class="bg-zinc-900/50 rounded-xl border border-white/[0.06] p-4 space-y-2">
-    <h5 class="text-xs font-medium uppercase tracking-wider text-zinc-500">
-      {{ group.label }}
-      <span v-if="group.unit" class="text-zinc-600 font-normal">({{ group.unit }})</span>
-    </h5>
-    <div class="h-48">
+    <div class="flex items-center justify-between">
+      <h5 class="text-xs font-medium uppercase tracking-wider text-zinc-500">
+        {{ group.label }}
+        <span v-if="group.unit" class="text-zinc-600 font-normal">({{ group.unit }})</span>
+      </h5>
+      <button
+        v-if="!expanded"
+        class="text-zinc-600 hover:text-zinc-300 transition-colors p-0.5"
+        title="Agrandir"
+        @click="emit('expand')"
+      >
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9m11.25-5.25v4.5m0-4.5h-4.5m4.5 0L15 9m-11.25 11.25v-4.5m0 4.5h4.5m-4.5 0L9 15m11.25 5.25v-4.5m0 4.5h-4.5m4.5 0L15 15" />
+        </svg>
+      </button>
+    </div>
+    <div :class="expanded ? 'h-96' : 'h-48'">
       <Line :data="chartData" :options="(chartOptions as any)" />
     </div>
     <!-- Mini stats -->
